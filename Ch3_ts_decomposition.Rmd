@@ -1,0 +1,348 @@
+---
+title: "Chapter 3 Exercise - Time Series Decomposition"
+author: "Matt Colantonio"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+The following are solutions to exercises for Chapter 3 of the Hyndman/Athanasopoulos Forecasting: Principles and Practice book. The chapter is focused on time series decomposition.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# this code clears the environment and installs/loads popular packages
+
+rm(list = ls()) 
+  gc()            
+  cat("\f")  
+packages <- c("readr", #open csv
+              "psych", # quick summary stats for data exploration,
+              "stargazer", #summary stats for sharing,
+              "tidyverse", # data manipulation like selecting variables,
+              "corrplot", # correlation plots
+              "ggplot2", # graphing
+              "ggcorrplot", # correlation plot
+              "gridExtra", #overlay plots
+              "data.table", # reshape for graphing 
+              "car", #vif
+              "prettydoc", # html output
+              "visdat", # visualize missing variables
+              "glmnet", # lasso/ridge
+              "caret", # confusion matrix
+              "MASS", #step AIC
+              "plm", # fixed effects demeaned regression
+              "lmtest", # test regression coefficients
+              "fpp3", # Foprecasting: Principles & Practice supplement
+              "tsibble", 
+              "tsibbledata",
+              "lubridate",
+              "forecast"
+)
+
+for (i in 1:length(packages)) {
+  if (!packages[i] %in% rownames(installed.packages())) {
+    install.packages(packages[i]
+                     , repos = "http://cran.rstudio.com/"
+                     , dependencies = TRUE
+    )
+  }
+  library(packages[i], character.only = TRUE)
+}
+
+rm(packages)
+  
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+setwd("/Users/matthewcolantonio/Documents/Textbooks/Forecasting-Hyndman/")
+```
+
+#### 1. Consider the GDP information in `global_economy`. Plot the GDP per capita for each country over time. Which country has the highest GDP per capita? How has this changed over time?
+
+```{r}
+# what does the global_economy dataset look like?
+head(global_economy)
+```
+
+```{r message=FALSE, warning=FALSE}
+
+global_economy %>% autoplot(GDP/Population, show.legend =  F)
+
+```
+
+```{r}
+ge1 <- global_economy
+max(ge1$Year) # what is the highest Year for this dataset?
+```
+
+Since 2017 is the highest Year value, we can list highest GDP per capita fy 2017 to answer the question.
+
+```{r}
+ge2 <- ge1[ge1$Year == 2017,] # create new dataframe for 2017 only
+
+ge2$GDPPC <- ge2$GDP/ge2$Population # create new varaible, GDP per Capita
+
+ge3 <- ge2[order(-ge2$GDPPC),]
+ge3
+
+```
+
+```{r}
+ge4 <- ge3[1:10,]
+
+ggplot(ge4, aes(x = reorder(Code, -GDPPC), y = GDPPC)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "GDPPC by Country Code", x = "Country Code", y = "GDPPC") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+We see that Luxembourg has highest GDP per capita in 2017. It began to separate itself in this category in the 1980s.
+
+#### 2. For each of the following series, make a graph of the data. If transforming seems appropriate, do so and describe the effect.
+
+-   United States GDP from `global_economy`.
+
+-   Slaughter of Victorian "Bulls, bullocks and steers" in `aus_livestock`.
+
+-   Victorian Electricity Demand from `vic_elec`.
+
+-   Gas production from `aus_production`.
+
+```{r}
+USA <- ge1[ge1$Code == 'USA',]
+USA  %>%  autoplot(GDP)
+```
+
+Since GDP necessarily grows with population, it makes sense to transform this data into GDP per capita.
+
+```{r}
+USA %>% autoplot(GDP/Population)
+
+```
+
+```{r}
+Victoria <- aus_livestock[aus_livestock$State == 'Victoria',]
+
+Victoria2 <- Victoria[Victoria$Animal == 'Bulls, bullocks and steers',]
+
+Victoria2  %>%  autoplot(Count)
+```
+
+```{r fig.width=8}
+# box cox transformation to limit variation over time
+victorian_bulls <- aus_livestock %>%
+  filter(Animal == 'Bulls, bullocks and steers' & State == 'Victoria')
+
+lambda <- victorian_bulls %>%
+  features(Count, features = guerrero) %>%
+  pull(lambda_guerrero)
+
+victorian_bulls %>%
+  autoplot(box_cox(Count, lambda)) +
+  labs(y='Slaughtered Count (log)',
+       x='',
+       title='BoxCox Transform Slaughter of Victorian Bulls, Bullocks, and Steers')
+```
+
+Looking at the Y-axis, we see that the Box-Cox transformation here has made variation more consistent over time.
+
+```{r}
+vic_elec  %>%  autoplot(Demand)
+```
+
+This data is taken in 30 minute increments. In this case, transforming the data to show daily usage would make more sense.
+
+```{r}
+avg_elec_demand_daily <- aggregate(vic_elec['Demand'], by=vic_elec['Date'], mean)
+
+avg_elec_demand_daily %>%
+  as_tsibble(index=Date) %>%
+  autoplot(Demand)
+```
+
+```{r}
+aus_production  %>% autoplot(Gas)
+```
+
+In this chart, we see that variation is increasing over time. A Box-Cox will standardize variation.
+
+```{r}
+lambda <- aus_production %>%
+  features(Gas, features = guerrero) %>%
+  pull(lambda_guerrero)
+lambda
+```
+
+```{r}
+aus_production %>%
+  autoplot(box_cox(Gas, lambda)) +
+  labs(y = "",
+       title = ("Transformed gas production with lambda = 0.109"),
+         round(lambda,2))
+```
+
+The lambda of 0.109 standardizes the variance.
+
+#### 3. Why is a Box-Cox transformation unhelpful for the `canadian_gas` data?
+
+```{r}
+autoplot(canadian_gas, Volume)
+```
+
+Since the changes in variation over time are not consistent (not increasing over time, for example) the Box-Cox will be ineffective in standardizing the variation. Let's plot a Box-Cox transform to show:
+
+```{r}
+lambda <- canadian_gas %>%
+  features(Volume, features = guerrero)  %>%
+  pull(lambda_guerrero)
+
+canadian_gas %>%
+  autoplot(box_cox(Volume,lambda)) 
+```
+
+We see here that there is still inconsistent variance in the data.
+
+#### 4. What Box-Cox transformation would you select for your retail data (from Exercise 7 in Section [2.10](https://otexts.com/fpp3/graphics-exercises.html#graphics-exercises))?
+
+Similar to Box-Cox transformations in previous questions, we are trying to find the proper lambda parameter in order to stabilize variance.
+
+```{r}
+set.seed(12345678)
+myseries <- aus_retail %>%
+  filter(`Series ID` == sample(aus_retail$`Series ID`,1))
+
+autoplot(myseries, Turnover)
+```
+
+```{r}
+myseries %>%
+  autoplot(box_cox(Turnover, lambda=0))
+```
+
+Manually selecting lambda = 0 shows to minimize some variance. We can also apply previous methods:
+
+```{r}
+lambda <- myseries %>%
+  features(Turnover, features = guerrero)  %>%
+  pull(lambda_guerrero)
+# the calculated lambda - 0.08
+myseries %>%
+  autoplot(box_cox(Turnoverlambda,lambda)) 
+```
+
+Question 5 involves more Box-Cox, and the code is the same so that question will be skipped.
+
+#### 6. Show that a 3×5 MA is equivalent to a 7-term weighted moving average with weights of 0.067, 0.133, 0.200, 0.200, 0.200, 0.133, and 0.067.
+
+```{r}
+library(slider)
+
+
+# create randome dataset
+set.seed(123)  # for reproducibility
+random_data <- data.frame(Adj_Close = rnorm(10))
+
+# Calculate 3x5 MA
+random_data <- random_data %>%
+  mutate(`3x5-MA` = rollmean(Adj_Close, k = 5, fill = NA))
+
+# Calculate 7-term weighted moving average
+random_data <- random_data %>%
+  mutate(
+    `7-term-WMA` = 0.067 * (Adj_Close + lag(Adj_Close, 1)) +
+                   0.133 * (lag(Adj_Close, 2) + lag(Adj_Close, 3)) +
+                   0.200 * (lag(Adj_Close, 4) + lag(Adj_Close, 5)) +
+                   0.133 * (lag(Adj_Close, 6) + lag(Adj_Close, 7)) +
+                   0.067 * lag(Adj_Close, 8)
+  )
+
+# Print the result
+print(random_data)
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+plot <- ggplot(random_data, aes(x = seq_along(Adj_Close))) +
+  geom_line(aes(y = Adj_Close, color = "Original Data"), size = 1) +
+  geom_line(aes(y = `3x5-MA`, color = "3x5-MA"), size = 1, linetype = "dashed") +
+  geom_line(aes(y = `7-term-WMA`, color = "7-term-WMA"), size = 1, linetype = "dotted") +
+  scale_color_manual(values = c("Original Data" = "black", "3x5-MA" = "blue", "7-term-WMA" = "red")) +
+  labs(title = "Moving Averages and Weighted Moving Average",
+       x = "Data Point Index",
+       y = "Value") +
+  theme_minimal()
+
+# Print the plot
+print(plot)
+```
+
+#### 
+
+#### 8.  Recall your retail time series data (from Exercise 7 in Section [2.10](https://otexts.com/fpp3/graphics-exercises.html#graphics-exercises)). Decompose the series using X-11. Does it reveal any outliers, or unusual features that you had not noticed previously?
+
+```{r message=FALSE, warning=FALSE}
+myseries %>%
+  model(classical_decomposition(Turnover,type = "multiplicative")) %>%
+  components() %>%
+  autoplot()
+```
+
+Doesn't appear too unusual.
+
+#### 10.  This exercise uses the `canadian_gas` data (monthly Canadian gas production in billions of cubic metres, January 1960 -- February 2005).
+
+##### (a)  Plot the data using `autoplot()`, `gg_subseries()` and `gg_season()` to look at the effect of the changing seasonality over time.
+
+```{r}
+canadian_gas %>%
+  autoplot(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+```{r}
+canadian_gas %>%
+  gg_subseries(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+```{r}
+canadian_gas %>%
+  gg_season(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+##### (b) Do an STL decomposition of the data. You will need to choose a seasonal window to allow for the changing shape of the seasonal component.
+
+```{r}
+canadian_gas %>%
+  model(
+    STL(Volume ~ trend(window = 21) + # window = 21 for monthly data
+          season(window = "periodic"),
+        robust = TRUE)) %>%
+  components() %>%
+  autoplot()
+
+```
+
+##### (c) How does the seasonal shape change over time? 
+
+Looking at the seasonal chart above, we see that over time demand still dips in the summer months but is less severe. Demand changes due to the weather and generally follows the same trend.
+
+```{r}
+canadian_gas %>% 
+  model(`STL` = STL(Volume ~ trend(window = 7) + season(window = 21))) %>% 
+  components() %>% 
+  gg_season(season_year) 
+```
+
+##### (d) Can you produce a plausible seasonally adjusted series?
+
+```{r}
+canadian_gas %>% 
+  model(`STL` = STL(Volume ~ trend(window = 7) + season(window = 21))) %>% 
+  components() %>% 
+  pull(season_adjust) -> canadian_gas_adjusted
+```
+
+##### 
