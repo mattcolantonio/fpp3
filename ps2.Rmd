@@ -1,0 +1,265 @@
+---
+title: 'Forecasting: Problem Set 2'
+author: "Matt Colantonio"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+## Problem Set 2
+
+```{r message=FALSE, warning=FALSE}
+# this code clears the environment and installs/loads popular packages
+
+rm(list = ls()) 
+  gc()            
+  cat("\f")  
+  
+packages <- c("readr", #open csv
+              "psych", # quick summary stats for data exploration,
+              "stargazer", #summary stats for sharing,
+              "tidyverse", # data manipulation like selecting variables,
+              "corrplot", # correlation plots
+              "ggplot2", # graphing
+              "ggcorrplot", # correlation plot
+              "gridExtra", #overlay plots
+              "data.table", # reshape for graphing 
+              "car", #vif
+              "prettydoc", # html output
+              "visdat", # visualize missing variables
+              "glmnet", # lasso/ridge
+              "caret", # confusion matrix
+              "MASS", #step AIC
+              "plm", # fixed effects demeaned regression
+              "lmtest", # test regression coefficients
+              "fpp3", # Foprecasting: Principles & Practice supplement
+              "tsibble", 
+              "tsibbledata",
+              "lubridate",
+              "forecast",
+              "seasonal"
+)
+
+for (i in 1:length(packages)) {
+  if (!packages[i] %in% rownames(installed.packages())) {
+    install.packages(packages[i]
+                     , repos = "http://cran.rstudio.com/"
+                     , dependencies = TRUE
+    )
+  }
+  library(packages[i], character.only = TRUE)
+}
+
+rm(packages)
+```
+
+```{r include=FALSE}
+setwd("/Users/matthewcolantonio/Documents/ADEC7406 Predictive Analytics/hw/")
+```
+
+### Chapter 2
+
+#### Exercise 2: Use `filter()` to find what days corresponded to the peak closing price for each of the four stocks in `gafa_stock`
+
+```{r}
+data(gafa_stock)
+gafa_stock %>%
+  group_by(Symbol) %>%
+  filter(Close == max(Close)) 
+```
+
+#### Exercise 3: Download the file `tute1.csv` from [the book website](https://bit.ly/fpptute1), open it in Excel (or some other spreadsheet application), and review its contents. You should find four columns of information. Columns B through D each contain a quarterly series, labelled Sales, AdBudget and GDP. Sales contains the quarterly sales for a small company over the period 1981-2005. AdBudget is the advertising budget and GDP is the gross domestic product. All series have been adjusted for inflation.
+
+```{r message=FALSE, warning=FALSE}
+tute1 <- readr::read_csv("tute1.csv")
+head(tute1, 4)
+```
+
+```{r}
+mytimeseries <- tute1 %>%
+  mutate(Quarter = yearquarter(Quarter)) %>%
+  as_tsibble(index = Quarter)
+```
+
+```{r}
+mytimeseries %>%
+  pivot_longer(-Quarter) %>%
+  ggplot(aes(x = Quarter, y = value, colour = name)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y")
+```
+
+The exercise prompts us to: Check what happens when you don't include `facet_grid().`
+
+```{r}
+mytimeseries %>%
+  pivot_longer(-Quarter) %>%
+  ggplot(aes(x = Quarter, y = value, colour = name)) +
+  geom_line()
+```
+
+The `facet_grid()`
+
+function allows for the variables to be displayed using their own corresponsing value scales (y axis) while keeping the X axis the same. It shows more detail in the variance of the variables.
+
+#### Exercise 10: The `aus_livestock` data contains the monthly total number of pigs slaughtered in Victoria, Australia, from Jul 1972 to Dec 2018. Use `filter()` to extract pig slaughters in Victoria between 1990 and 1995. Use `autoplot()` and `ACF()` for this data. How do they differ from white noise? If a longer period of data is used, what difference does it make to the ACF?
+
+```{r}
+data(aus_livestock)
+
+aus_livestock %>%
+  mutate(Month = yearmonth(Month)) %>%
+  as_tsibble(index = Month)
+
+
+```
+
+```{r}
+victoria <- aus_livestock %>%
+  filter(State == "Victoria",
+         Animal == "Pigs",
+         year(Month) %in% 1990:1995)
+```
+
+```{r}
+ACF(victoria, Count) %>% 
+  autoplot()
+```
+
+There looks to be serious autocorrelation from lags as shown in the ACF. If longer time periods are used:
+
+```{r}
+victoria2 <- aus_livestock %>%
+  filter(State == "Victoria",
+         Animal == "Pigs",
+         year(Month) %in% 1980:2018)
+```
+
+```{r}
+ACF(victoria2, Count) %>% 
+  autoplot()
+```
+
+the autocorrelation remains and even appears stronger. This means this is not a white noise dataset and there is some clear seasonal trends at almost all lags.
+
+### Chapter 3
+
+#### Exercise 3: Why is a Box-Cox transformation unhelpful for the `canadian_gas` data?
+
+```{r}
+autoplot(canadian_gas, Volume)
+```
+
+Since the changes in variation over time are not consistent (not increasing over time, for example) the Box-Cox will be ineffective in standardizing the variation. Let's plot a Box-Cox transform to show:
+
+```{r}
+lambda <- canadian_gas %>%
+  features(Volume, features = guerrero)  %>%
+  pull(lambda_guerrero)
+
+canadian_gas %>%
+  autoplot(box_cox(Volume,lambda)) 
+```
+
+We see here that there is still inconsistent variance in the data.
+
+#### Exercise 10: This exercise uses the `canadian_gas` data (monthly Canadian gas production in billions of cubic metres, January 1960 -- February 2005).
+
+##### (a) Plot the data using `autoplot()`, `gg_subseries()` and `gg_season()` to look at the effect of the changing seasonality over time.
+
+```{r}
+canadian_gas %>%
+  autoplot(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+```{r}
+canadian_gas %>%
+  gg_subseries(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+```{r}
+canadian_gas %>%
+  gg_season(Volume)+
+  labs(title = "Monthly Canadian Gas Production")
+```
+
+##### (b) Do an STL decomposition of the data. You will need to choose a seasonal window to allow for the changing shape of the seasonal component.
+
+```{r}
+canadian_gas %>%
+  model(
+    STL(Volume ~ trend(window = 21) + # window = 21 for monthly data
+          season(window = "periodic"),
+        robust = TRUE)) %>%
+  components() %>%
+  autoplot()
+```
+
+##### (c) How does the seasonal shape change over time?
+
+Looking at the seasonal chart above, we see that over time demand still dips in the summer months but is less severe. Demand changes due to the weather and generally follows the same trend.
+
+```{r}
+canadian_gas %>% 
+  model(`STL` = STL(Volume ~ trend(window = 7) + season(window = 21))) %>% 
+  components() %>% 
+  gg_season(season_year) 
+```
+
+##### (d) Can you produce a plausible seasonally adjusted series?
+
+```{r}
+canadian_gas %>% 
+  model(`STL` = STL(Volume ~ trend(window = 7) + season(window = 21))) %>% 
+  components() %>% 
+  pull(season_adjust) -> canadian_gas_adjusted
+```
+
+```{r}
+canadian_gas %>%
+ model(
+    STL(Volume ~ trend(window = 21) +
+                   season(window = 13),
+    robust = TRUE)) %>%
+  components() %>%
+  ggplot(aes(x = Month)) +
+  geom_line(aes(y = Volume, colour = "Data")) +
+  geom_line(aes(y = season_adjust,
+                colour = "Seasonally Adjusted")) +
+  geom_line(aes(y = trend, colour = "Trend")) +
+  labs(title = "STL decomposition of Canadian Gas Production") +
+  scale_colour_manual(
+    values = c("gray", "#0072B2", "#D55E00"),
+    breaks = c("Data", "Seasonally Adjusted", "Trend")
+  )
+```
+
+##### (e) Compare the results with those obtained using SEATS and X-11. How are they different?
+
+X-11
+
+```{r}
+x11_dcmp <- canadian_gas %>%
+  model(x11 = X_13ARIMA_SEATS(Volume ~ x11())) %>%
+  components()
+autoplot(x11_dcmp) +
+  labs(title =
+    "Decomposition of total Canadian Gas using X-11.")
+```
+
+SEATS
+
+```{r}
+seats_dcmp <- canadian_gas %>%
+  model(seats = X_13ARIMA_SEATS(Volume ~ seats())) %>%
+  components()
+autoplot(seats_dcmp) +
+  labs(title =
+    "Decomposition of Canadian GAs using SEATS")
+```
+
+The irregular series is lower with SEATS. Other trends look similar.
