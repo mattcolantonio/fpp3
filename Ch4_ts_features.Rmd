@@ -1,0 +1,190 @@
+---
+title: "Chapter 4 Exercise - Time series features"
+author: "Matt Colantonio"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+  toc: true
+  toc_float: true
+  theme: lumen
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# this code clears the environment and installs/loads popular packages
+
+rm(list = ls()) 
+  gc()            
+  cat("\f")  
+packages <- c("readr", #open csv
+              "psych", # quick summary stats for data exploration,
+              "stargazer", #summary stats for sharing,
+              "tidyverse", # data manipulation like selecting variables,
+              "corrplot", # correlation plots
+              "ggplot2", # graphing
+              "GGally", # ts features
+              "ggcorrplot", # correlation plot
+              "gridExtra", #overlay plots
+              "data.table", # reshape for graphing 
+              "car", #vif
+              "prettydoc", # html output
+              "visdat", # visualize missing variables
+              "glmnet", # lasso/ridge
+              "caret", # confusion matrix
+              "MASS", #step AIC
+              "plm", # fixed effects demeaned regression
+              "lmtest", # test regression coefficients
+              "fpp3", # Foprecasting: Principles & Practice supplement
+              "tsibble", 
+              "tsibbledata",
+              "lubridate",
+              "forecast"
+)
+
+for (i in 1:length(packages)) {
+  if (!packages[i] %in% rownames(installed.packages())) {
+    install.packages(packages[i]
+                     , repos = "http://cran.rstudio.com/"
+                     , dependencies = TRUE
+    )
+  }
+  library(packages[i], character.only = TRUE)
+}
+
+rm(packages)
+  
+```
+
+```{r include=FALSE}
+setwd("/Users/matthewcolantonio/Documents/Textbooks/Forecasting-Hyndman/")
+```
+
+#### 1. Write a function to compute the mean and standard deviation of a time series, and apply it to the `PBS` data. Plot the series with the highest mean, and the series with the lowest standard deviation.
+
+```{r}
+df <- PBS
+
+compute_mean_sd <- function(x) {
+  mean_value <- mean(x)
+  sd_value <- sd(x)
+  return(list(mean=mean_value, sd=sd_value))
+}
+```
+
+```{r}
+results <- lapply(df, compute_mean_sd)
+
+```
+
+```{r}
+highest_mean_series <- names(results)[which.max(sapply(results, function(x) x$mean))]
+lowest_sd_series <- names(results)[which.min(sapply(results, function(x) x$sd))]
+
+
+```
+
+Highest mean is Cost.
+
+```{r}
+PBS %>% autoplot(Cost, show.legend = F)
+```
+
+Lowest sd is Month (this seems quite obvious).
+
+```{r}
+PBS %>% autoplot(Month, show.legend = F)
+```
+
+#### 2. Use `GGally::ggpairs()` to look at the relationships between the STL-based features for the holiday series in the `tourism` data. Change `seasonal_peak_year` and `seasonal_trough_year` to factors, as shown in Figure [4.3](https://otexts.com/fpp3/exploring-australian-tourism-data.html#fig:seasonalfeatures). Which is the peak quarter for holidays in each state?
+
+```{r}
+data("tourism")
+holiday_data <- filter(tourism, Purpose== "Holiday")
+
+```
+
+For Adelaide:
+
+```{r}
+holiday_data[holiday_data$Region == "Adelaide", ] %>%
+  model(
+    STL(Trips ~ trend(window = 7) + 
+          season(window = "periodic"),
+        robust = TRUE)) %>%
+  components() %>%
+  autoplot()
+
+```
+
+For all Regions:
+
+```{r}
+holiday_data %>%
+  model(
+    STL(Trips ~ trend(window = 7) + 
+          season(window = "periodic"),
+        robust = TRUE)) %>%
+  components() %>%
+  autoplot(show.legend = FALSE)
+```
+
+Creating objects out of the STL models so that the seasonal aspects can be made into factors and compared.
+
+```{r}
+stl <- holiday_data %>%
+  model(
+    STL(Trips ~ trend(window = 7) + 
+          season(window = "periodic"),
+        robust = TRUE)) %>%
+  components() %>%
+  autoplot(show.legend = FALSE)
+```
+
+#### 3. Use a feature-based approach to look for outlying series in the `PBS` data. What is unusual about the series you identify as "outliers".
+
+```{r}
+feature_df <- df %>%
+  index_by(Month) %>%
+  summarise(
+    Mean_Scripts = mean(Scripts),
+    StdDev_Scripts = sd(Scripts),
+    Mean_Cost = mean(Cost),
+    StdDev_Cost = sd(Cost)
+    # Add more features as needed
+  )
+
+# Determine outliers based on the features
+# For example, you can use a z-score threshold to identify outliers
+z_threshold <- 1.96  # Adjust this threshold as needed
+outliers <- feature_df %>%
+  filter(abs(Mean_Scripts) > z_threshold | abs(StdDev_Scripts) > z_threshold | abs(Mean_Cost) > z_threshold | abs(StdDev_Cost) > z_threshold)
+
+# Print the outliers
+print(outliers)
+```
+
+This list of outliers is 204 observations long, using Z-score of 1.96. There are 6080 observations in the holiday dataset.
+
+The GGally plot is also useful and it looks cool.
+
+```{r}
+holiday_features <- holiday_data %>%
+  features(Trips, feature_set(pkgs = "feasts"))
+holiday_features
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+library(glue)
+holiday_features %>%
+  select_at(vars(contains("season"), Purpose)) %>%
+  mutate(
+    seasonal_peak_year = seasonal_peak_year +
+      4*(seasonal_peak_year==0),
+    seasonal_trough_year = seasonal_trough_year +
+      4*(seasonal_trough_year==0),
+    seasonal_peak_year = glue("Q{seasonal_peak_year}"),
+    seasonal_trough_year = glue("Q{seasonal_trough_year}"),
+  ) %>%
+  GGally::ggpairs(mapping = aes(colour = Purpose))
+```
